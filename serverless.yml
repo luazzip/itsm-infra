@@ -1,0 +1,300 @@
+org: luanameniz
+service: itsm-infra
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+
+resources:
+  Resources:
+    # ===================== BUS DE EVENTOS (SNS) =====================
+    TopicoEventos:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: itsm-eventos-${sls:stage}
+
+    # ===================== DEAD LETTER QUEUES =====================
+    DlqIncidentes:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-dlq-incidentes-${sls:stage}
+        MessageRetentionPeriod: 1209600
+    DlqProblemas:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-dlq-problemas-${sls:stage}
+        MessageRetentionPeriod: 1209600
+    DlqCambios:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-dlq-cambios-${sls:stage}
+        MessageRetentionPeriod: 1209600
+    DlqSolicitudes:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-dlq-solicitudes-${sls:stage}
+        MessageRetentionPeriod: 1209600
+    DlqNotificaciones:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-dlq-notificaciones-${sls:stage}
+        MessageRetentionPeriod: 1209600
+
+    # ===================== COLAS (con DLQ, maxReceiveCount 3) =====================
+    QIncidentes:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-q-incidentes-${sls:stage}
+        VisibilityTimeout: 180
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [DlqIncidentes, Arn]
+          maxReceiveCount: 3
+    QProblemas:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-q-problemas-${sls:stage}
+        VisibilityTimeout: 180
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [DlqProblemas, Arn]
+          maxReceiveCount: 3
+    QCambios:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-q-cambios-${sls:stage}
+        VisibilityTimeout: 180
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [DlqCambios, Arn]
+          maxReceiveCount: 3
+    QSolicitudes:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-q-solicitudes-${sls:stage}
+        VisibilityTimeout: 180
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [DlqSolicitudes, Arn]
+          maxReceiveCount: 3
+    QNotificaciones:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: itsm-q-notificaciones-${sls:stage}
+        VisibilityTimeout: 180
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [DlqNotificaciones, Arn]
+          maxReceiveCount: 3
+
+    # ===================== PERMISO SNS -> SQS =====================
+    PoliticaColas:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: QIncidentes
+          - Ref: QProblemas
+          - Ref: QCambios
+          - Ref: QSolicitudes
+          - Ref: QNotificaciones
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action: sqs:SendMessage
+              Resource:
+                - Fn::GetAtt: [QIncidentes, Arn]
+                - Fn::GetAtt: [QProblemas, Arn]
+                - Fn::GetAtt: [QCambios, Arn]
+                - Fn::GetAtt: [QSolicitudes, Arn]
+                - Fn::GetAtt: [QNotificaciones, Arn]
+              Condition:
+                ArnEquals:
+                  aws:SourceArn:
+                    Ref: TopicoEventos
+
+    # ===================== SUSCRIPCIONES + FILTER POLICIES =====================
+    SubQIncidentes:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: TopicoEventos
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt: [QIncidentes, Arn]
+        RawMessageDelivery: true
+        FilterPolicy:
+          evento:
+            - problema.resuelto
+    SubQProblemas:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: TopicoEventos
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt: [QProblemas, Arn]
+        RawMessageDelivery: true
+        FilterPolicy:
+          evento:
+            - incidente.escalado_a_problema
+            - cambio.implementado
+    SubQCambios:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: TopicoEventos
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt: [QCambios, Arn]
+        RawMessageDelivery: true
+        FilterPolicy:
+          evento:
+            - problema.causa_raiz_identificada
+            - solicitud.cambio_estandar
+    SubQSolicitudes:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: TopicoEventos
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt: [QSolicitudes, Arn]
+        RawMessageDelivery: true
+        FilterPolicy:
+          evento:
+            - cambio.implementado
+    SubQNotificaciones:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: TopicoEventos
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt: [QNotificaciones, Arn]
+        RawMessageDelivery: true
+        # Sin FilterPolicy: recibe TODOS los eventos
+
+    # ===================== PARAMETROS SSM (los leen los otros 4 stacks) =====================
+    ParamSnsEventos:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /itsm/${sls:stage}/sns-eventos-arn
+        Type: String
+        Value:
+          Ref: TopicoEventos
+    ParamQIncidentes:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /itsm/${sls:stage}/q-incidentes-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [QIncidentes, Arn]
+    ParamQProblemas:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /itsm/${sls:stage}/q-problemas-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [QProblemas, Arn]
+    ParamQCambios:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /itsm/${sls:stage}/q-cambios-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [QCambios, Arn]
+    ParamQSolicitudes:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /itsm/${sls:stage}/q-solicitudes-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [QSolicitudes, Arn]
+    ParamQNotificaciones:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /itsm/${sls:stage}/q-notificaciones-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [QNotificaciones, Arn]
+
+    # ===================== ALARMAS CLOUDWATCH (mensajes en DLQ) =====================
+    AlarmaDlqIncidentes:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: itsm-dlq-incidentes-${sls:stage}-con-mensajes
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: itsm-dlq-incidentes-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+    AlarmaDlqProblemas:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: itsm-dlq-problemas-${sls:stage}-con-mensajes
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: itsm-dlq-problemas-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+    AlarmaDlqCambios:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: itsm-dlq-cambios-${sls:stage}-con-mensajes
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: itsm-dlq-cambios-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+    AlarmaDlqSolicitudes:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: itsm-dlq-solicitudes-${sls:stage}-con-mensajes
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: itsm-dlq-solicitudes-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+    AlarmaDlqNotificaciones:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: itsm-dlq-notificaciones-${sls:stage}-con-mensajes
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: itsm-dlq-notificaciones-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
