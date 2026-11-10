@@ -1,4 +1,9 @@
 # itsm-infra
+> **Despliegue POSPUESTO (Contrato de Integración v1.1).** SNS, SQS y DLQ quedan
+> fuera de esta fase. No ejecutar `serverless deploy` hasta que se autorice la fase de eventos.
+> Antes de habilitarla, verificar los contratos de `cambio.implementado` y `problema.resuelto`
+> con Problemas, Cambios y Solicitudes. Requiere Serverless Framework 3.
+
 Bus de eventos del SaaS ITSM: 1 tema SNS, 5 colas SQS con DLQ (maxReceiveCount 3),
 filter policies por el atributo `evento`, ARN publicados en SSM y alarmas CloudWatch de las DLQ.
 
