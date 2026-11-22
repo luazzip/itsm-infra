@@ -1,8 +1,28 @@
 # itsm-infra
-> **Despliegue POSPUESTO (Contrato de Integración v1.1).** SNS, SQS y DLQ quedan
-> fuera de esta fase. No ejecutar `serverless deploy` hasta que se autorice la fase de eventos.
-> Antes de habilitarla, verificar los contratos de `cambio.implementado` y `problema.resuelto`
-> con Problemas, Cambios y Solicitudes. Requiere Serverless Framework 3.
+
+Infraestructura de eventos del SaaS ITSM, desplegada en AWS mediante Serverless Framework 3.
+
+## Estado del despliegue
+
+- **Entorno:** `dev`, región `us-east-1`.
+- **Stack CloudFormation:** `itsm-infra-dev`.
+- **Estado:** desplegado y operativo.
+- **Mensajería:** un tópico SNS, cinco colas SQS y sus respectivas DLQ.
+- **Reintentos:** hasta tres recepciones antes de enviar a DLQ.
+- **Enrutamiento:** suscripciones SNS con filtros por atributo `evento`.
+- **Observabilidad:** alarmas CloudWatch asociadas a las DLQ.
+- **Configuración compartida:** ARN publicados en AWS Systems Manager Parameter Store.
+
+Se verificaron dos circuitos de integración de extremo a extremo:
+
+1. `Incidentes -> Problemas -> Cambios -> Problemas -> Incidentes`.
+2. `Solicitudes -> Cambios -> Solicitudes`.
+
+Los eventos se procesan de forma asíncrona mediante SNS, SQS y consumidores Lambda.
+
+El consumidor de Problemas estuvo deshabilitado durante una prueba y fue reactivado. Tras procesar los mensajes pendientes, el problema y el incidente vinculados quedaron resueltos. Se debe comprobar que los event source mappings permanezcan habilitados.
+
+**Precaución:** no volver a desplegar ni eliminar este stack durante el cierre del proyecto sin revisar los cambios de infraestructura. Las colas y sus suscripciones contienen la configuración compartida por los microservicios.
 
 Bus de eventos del SaaS ITSM: 1 tema SNS, 5 colas SQS con DLQ (maxReceiveCount 3),
 filter policies por el atributo `evento`, ARN publicados en SSM y alarmas CloudWatch de las DLQ.
